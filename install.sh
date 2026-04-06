@@ -1,0 +1,499 @@
+#!/bin/bash
+###############################################################################
+# Whisk-GIMP Integration - Universal Installer
+#
+# Installs the complete Whisk AI integration for GIMP on any system.
+# Supports: Debian/Ubuntu, Fedora/RHEL, Arch Linux, macOS (partial)
+#
+# Usage:
+#   curl -fsSL https://raw.githubusercontent.com/YOUR_USER/whisk-gimp/main/install.sh | bash
+#   OR
+#   chmod +x install.sh && ./install.sh
+###############################################################################
+
+set -euo pipefail
+
+# Configuration
+INSTALL_DIR="${WHISK_INSTALL_DIR:-/opt/whisk-gimp}"
+REPO_URL="https://github.com/YOUR_USER/whisk-gimp.git"
+WHISK_API_REPO="https://github.com/rohitaryal/whisk-api.git"
+BRIDGE_PORT="${WHISK_BRIDGE_PORT:-9876}"
+VNC_PORT="${VNC_PORT:-5901}"
+VNC_PASSWORD="${VNC_PASSWORD:-whiskgimp}"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+# State tracking
+PACKAGES_TO_INSTALL=()
+SERVICES_INSTALLED=()
+
+###############################################################################
+# Helper Functions
+###############################################################################
+
+log_info()     { echo -e "${BLUE}[INFO]${NC} $1"; }
+log_success()  { echo -e "${GREEN}[OK]${NC} $1"; }
+log_warn()     { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error()    { echo -e "${RED}[ERROR]${NC} $1"; }
+log_step()     { echo -e "\n${CYAN}═══ $1 ═══${NC}"; }
+
+die() {
+    log_error "$1"
+    echo "Installation failed. Check the error above."
+    exit 1
+}
+
+# Detect OS
+detect_os() {
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        OS_NAME=$ID
+        OS_VERSION=$VERSION_ID
+    elif [ "$(uname)" = "Darwin" ]; then
+        OS_NAME="macos"
+        OS_VERSION=$(sw_vers -productVersion)
+    else
+        OS_NAME="unknown"
+    fi
+    log_info "Detected OS: $OS_NAME $OS_VERSION"
+}
+
+# Package managers
+install_packages_debian() {
+    log_info "Installing packages via apt..."
+    apt-get update -qq
+    apt-get install -y -qq "$@" >/dev/null 2>&1
+}
+
+install_packages_fedora() {
+    log_info "Installing packages via dnf..."
+    dnf install -y -q "$@" >/dev/null 2>&1
+}
+
+install_packages_arch() {
+    log_info "Installing packages via pacman..."
+    pacman -S --noconfirm --needed "$@" >/dev/null 2>&1
+}
+
+install_packages_macos() {
+    log_info "Installing packages via brew..."
+    brew install "$@" >/dev/null 2>&1
+}
+
+install_packages() {
+    PACKAGES_TO_INSTALL=("$@")
+    case "$OS_NAME" in
+        ubuntu|debian)    install_packages_debian "$@" ;;
+        fedora|rhel|centos) install_packages_fedora "$@" ;;
+        arch|manjaro)     install_packages_arch "$@" ;;
+        macos)            install_packages_macos "$@" ;;
+        *)                die "Unsupported OS: $OS_NAME" ;;
+    esac
+}
+
+# Check if command exists
+has_cmd() { command -v "$1" >/dev/null 2>&1; }
+
+###############################################################################
+# Installation Steps
+###############################################################################
+
+step_banner() {
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════╗"
+    echo "║          Whisk AI - GIMP Integration Installer          ║"
+    echo "║                                                         ║"
+    echo "║  AI image generation tools integrated into GIMP         ║"
+    echo "║  Features: Generate, Refine, Caption, Gallery           ║"
+    echo "╚══════════════════════════════════════════════════════════╝"
+    echo ""
+}
+
+step_check_root() {
+    log_step "Checking permissions"
+    if [ "$(id -u)" -ne 0 ]; then
+        log_warn "Not running as root. Some features may require sudo."
+        USE_SUDO="sudo"
+    else
+        USE_SUDO=""
+    fi
+}
+
+step_detect_os() {
+    log_step "Detecting operating system"
+    detect_os
+}
+
+step_install_dependencies() {
+    log_step "Installing dependencies"
+
+    # Node.js
+    if ! has_cmd node; then
+        log_info "Installing Node.js..."
+        case "$OS_NAME" in
+            ubuntu|debian)
+                curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+                install_packages nodejs
+                ;;
+            fedora|rhel)
+                install_packages nodejs
+                ;;
+            arch)
+                install_packages nodejs npm
+                ;;
+            macos)
+                install_packages node
+                ;;
+        esac
+    fi
+    log_success "Node.js: $(node --version)"
+
+    # npm/bun
+    if ! has_cmd bun && ! has_cmd npm; then
+        log_info "Installing npm..."
+        case "$OS_NAME" in
+            ubuntu|debian|fedora|rhel|arch) install_packages npm ;;
+            macos) install_packages npm ;;
+        esac
+    fi
+
+    # TypeScript (for building whisk-api)
+    if ! has_cmd tsc; then
+        log_info "Installing TypeScript..."
+        npm install -g typescript >/dev/null 2>&1 || true
+    fi
+
+    # GIMP
+    if ! has_cmd gimp; then
+        log_info "Installing GIMP..."
+        case "$OS_NAME" in
+            ubuntu|debian)
+                install_packages gimp gimp-plugin-registry
+                ;;
+            fedora|rhel)
+                install_packages gimp
+                ;;
+            arch)
+                install_packages gimp
+                ;;
+            macos)
+                log_warn "GIMP on macOS: Please install from https://www.gimp.org/downloads/"
+                ;;
+        esac
+    fi
+    if has_cmd gimp; then
+        log_success "GIMP: $(gimp --version 2>&1 | head -1)"
+    fi
+
+    # Python3 + GTK
+    if ! python3 -c "import gi" 2>/dev/null; then
+        log_info "Installing Python GTK bindings..."
+        case "$OS_NAME" in
+            ubuntu|debian)
+                install_packages python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-gdkpixbuf-2.0
+                ;;
+            fedora|rhel)
+                install_packages python3-gobject gtk3 gdk-pixbuf2
+                ;;
+            arch)
+                install_packages python-gobject gtk3 gdk-pixbuf2
+                ;;
+            macos)
+                install_packages pygobject3 gtk+3
+                ;;
+        esac
+    fi
+    log_success "Python GTK: OK"
+
+    # VNC (Linux only)
+    if [ "$OS_NAME" != "macos" ]; then
+        if ! has_cmd x11vnc; then
+            log_info "Installing VNC tools..."
+            case "$OS_NAME" in
+                ubuntu|debian)
+                    install_packages x11vnc xvfb
+                    ;;
+                fedora|rhel)
+                    install_packages x11vnc xorg-x11-server-Xvfb
+                    ;;
+                arch)
+                    install_packages x11vnc xvfb
+                    ;;
+            esac
+        fi
+        log_success "VNC tools: OK"
+    fi
+
+    # curl, wget
+    if ! has_cmd curl; then
+        install_packages curl
+    fi
+}
+
+step_clone_repos() {
+    log_step "Setting up Whisk API"
+
+    local whisk_api_dir="$INSTALL_DIR/whisk-api"
+    if [ ! -d "$whisk_api_dir" ]; then
+        log_info "Cloning whisk-api..."
+        mkdir -p "$INSTALL_DIR"
+        git clone "$WHISK_API_REPO" "$whisk_api_dir"
+    fi
+
+    cd "$whisk_api_dir"
+
+    # Install dependencies
+    if [ ! -d "node_modules" ]; then
+        log_info "Installing whisk-api dependencies..."
+        npm install >/dev/null 2>&1 || bun install 2>/dev/null || true
+    fi
+
+    # Build
+    if [ ! -d "dist" ] || [ ! -f "dist/index.js" ]; then
+        log_info "Building whisk-api..."
+
+        # Try bun first, then npm+tsc
+        if has_cmd bun; then
+            bun install --dev 2>/dev/null || true
+            bun run build 2>/dev/null || true
+        fi
+
+        if [ ! -d "dist" ] || [ ! -f "dist/index.js" ]; then
+            npm install 2>/dev/null || true
+
+            # Fix tsconfig if needed
+            if grep -q '"rootDir"' tsconfig.json 2>/dev/null; then
+                tsc -p tsconfig.json 2>/dev/null || true
+            else
+                # Add rootDir
+                sed -i.bak 's/"outDir"/"rootDir": ".\/src",\n        "outDir"/' tsconfig.json
+                tsc -p tsconfig.json 2>/dev/null || true
+            fi
+        fi
+    fi
+
+    if [ -d "dist" ] && [ -f "dist/index.js" ]; then
+        log_success "whisk-api: Built successfully"
+    else
+        log_warn "whisk-api: Build may have issues, continuing anyway..."
+    fi
+}
+
+step_install_application() {
+    log_step "Installing Whisk-GIMP Integration"
+
+    # Create directories
+    $USE_SUDO mkdir -p "$INSTALL_DIR"
+    $USE_SUDO mkdir -p "$INSTALL_DIR/output"
+    $USE_SUDO mkdir -p "$INSTALL_DIR/logs"
+    $USE_SUDO mkdir -p "$INSTALL_DIR/pids"
+    mkdir -p "$HOME/.config/whisk-gimp"
+    mkdir -p "$HOME/.config/whisk-gimp/logs"
+    mkdir -p "$HOME/.config/whisk-gimp/output"
+
+    # Copy files
+    log_info "Copying application files..."
+    $USE_SUDO cp "$(dirname "$0")/src/bridge-server.js" "$INSTALL_DIR/"
+    $USE_SUDO cp "$(dirname "$0")/src/whisk_gimp_gui.py" "$INSTALL_DIR/"
+    $USE_SUDO cp "$(dirname "$0")/scripts/whisk-gimp.sh" "$INSTALL_DIR/"
+    $USE_SUDO chmod +x "$INSTALL_DIR/whisk-gimp.sh"
+    $USE_SUDO chmod +x "$INSTALL_DIR/whisk_gimp_gui.py"
+
+    # Update bridge server import path to use local whisk-api
+    if [ -f "$INSTALL_DIR/bridge-server.js" ]; then
+        $USE_SUDO sed -i "s|/home/workspace/whisk-api/dist/index.js|$INSTALL_DIR/whisk-api/dist/index.js|g" "$INSTALL_DIR/bridge-server.js" 2>/dev/null || true
+    fi
+
+    # Install GIMP Script-Fu plugin
+    local gimp_scripts_dir="$HOME/.config/GIMP/2.10/scripts"
+    mkdir -p "$gimp_scripts_dir"
+    cp "$(dirname "$0")/gimp-scripts/whisk_ai_tools.scm" "$gimp_scripts_dir/"
+    log_success "GIMP Script-Fu plugin: Installed"
+
+    # Create symlink for easy access
+    if [ -d /usr/local/bin ]; then
+        $USE_SUDO ln -sf "$INSTALL_DIR/whisk-gimp.sh" /usr/local/bin/whisk-gimp 2>/dev/null || true
+    fi
+
+    log_success "Application files: Installed to $INSTALL_DIR"
+}
+
+step_create_desktop_entry() {
+    log_step "Creating desktop integration"
+
+    local desktop_file="$HOME/.local/share/applications/whisk-gimp.desktop"
+    mkdir -p "$(dirname "$desktop_file")"
+
+    cat > "$desktop_file" << EOF
+[Desktop Entry]
+Name=Whisk AI for GIMP
+Comment=AI image generation tools integrated with GIMP
+Exec=$INSTALL_DIR/whisk-gimp.sh start
+Icon=org.gimp.GIMP
+Terminal=false
+Type=Application
+Categories=Graphics;2DGraphics;RasterGraphics;GTK;
+Keywords=AI;Image;Generation;GIMP;
+EOF
+
+    log_success "Desktop entry: Created"
+}
+
+step_create_config() {
+    log_step "Creating configuration"
+
+    local config_file="$HOME/.config/whisk-gimp/config.json"
+    if [ ! -f "$config_file" ]; then
+        cat > "$config_file" << 'EOF'
+{
+  "cookie": "",
+  "session_id": "",
+  "aspect_ratio": "IMAGE_ASPECT_RATIO_LANDSCAPE",
+  "model": "IMAGEN_3_5",
+  "seed": 0
+}
+EOF
+        log_info "Config created at: $config_file"
+        log_warn "You need to configure your Google cookie after first launch"
+    else
+        log_info "Config already exists"
+    fi
+}
+
+step_post_install() {
+    log_step "Post-installation setup"
+
+    # Create wrapper script in user's PATH
+    local wrapper="$HOME/.local/bin/whisk-gimp"
+    mkdir -p "$(dirname "$wrapper")"
+    cat > "$wrapper" << EOF
+#!/bin/bash
+# Whisk-GIMP wrapper
+exec "$INSTALL_DIR/whisk-gimp.sh" "\$@"
+EOF
+    chmod +x "$wrapper"
+
+    # Add to PATH if needed
+    if ! echo "$PATH" | grep -q "$HOME/.local/bin"; then
+        echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc" 2>/dev/null || true
+        echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.zshrc" 2>/dev/null || true
+    fi
+
+    log_success "Command 'whisk-gimp' available in PATH"
+}
+
+step_verify_installation() {
+    log_step "Verifying installation"
+
+    local errors=0
+
+    # Check files
+    if [ -f "$INSTALL_DIR/bridge-server.js" ]; then
+        log_success "Bridge server script"
+    else
+        log_error "Bridge server script missing"
+        errors=$((errors + 1))
+    fi
+
+    if [ -f "$INSTALL_DIR/whisk_gimp_gui.py" ]; then
+        log_success "GUI application"
+    else
+        log_error "GUI application missing"
+        errors=$((errors + 1))
+    fi
+
+    if [ -f "$INSTALL_DIR/whisk-gimp.sh" ]; then
+        log_success "Management script"
+    else
+        log_error "Management script missing"
+        errors=$((errors + 1))
+    fi
+
+    # Check whisk-api build
+    if [ -d "$INSTALL_DIR/whisk-api/dist" ]; then
+        log_success "whisk-api built"
+    else
+        log_warn "whisk-api not built (may need manual build)"
+    fi
+
+    # Check GIMP plugin
+    if [ -f "$HOME/.config/GIMP/2.10/scripts/whisk_ai_tools.scm" ]; then
+        log_success "GIMP Script-Fu plugin"
+    else
+        log_warn "GIMP Script-Fu plugin not found"
+    fi
+
+    # Check Python GTK
+    if python3 -c "import gi; gi.require_version('Gtk', '3.0'); from gi.repository import Gtk" 2>/dev/null; then
+        log_success "Python GTK bindings"
+    else
+        log_error "Python GTK bindings missing"
+        errors=$((errors + 1))
+    fi
+
+    if [ $errors -gt 0 ]; then
+        echo ""
+        log_warn "Installation completed with $errors warning(s)"
+    else
+        log_success "All checks passed!"
+    fi
+}
+
+step_print_usage() {
+    echo ""
+    echo "╔══════════════════════════════════════════════════════════╗"
+    echo "║              Installation Complete!                     ║"
+    echo "╚══════════════════════════════════════════════════════════╝"
+    echo ""
+    echo "Installation directory: $INSTALL_DIR"
+    echo ""
+    echo "Quick Start:"
+    echo "  1. Start all services:"
+    echo "     whisk-gimp start"
+    echo ""
+    echo "  2. Connect via VNC (from your local machine):"
+    echo "     ssh -L 5901:localhost:5901 user@this-machine"
+    echo "     Then connect VNC client to: localhost:5901"
+    echo "     Password: $VNC_PASSWORD"
+    echo ""
+    echo "  3. Configure your Google cookie in the GUI Settings tab"
+    echo ""
+    echo "Management Commands:"
+    echo "  whisk-gimp start      - Start all services"
+    echo "  whisk-gimp stop       - Stop all services"
+    echo "  whisk-gimp restart    - Restart everything"
+    echo "  whisk-gimp status     - Check service status"
+    echo "  whisk-gimp logs       - View logs"
+    echo "  whisk-gimp configure  - Configure cookie"
+    echo ""
+    echo "Documentation: $INSTALL_DIR/README.md"
+    echo "Support: https://github.com/YOUR_USER/whisk-gimp/issues"
+    echo ""
+}
+
+###############################################################################
+# Main Installation Flow
+###############################################################################
+
+main() {
+    step_banner
+    step_check_root
+    step_detect_os
+    step_install_dependencies
+    step_clone_repos
+    step_install_application
+    step_create_desktop_entry
+    step_create_config
+    step_post_install
+    step_verify_installation
+    step_print_usage
+}
+
+# Run installation
+main "$@"
