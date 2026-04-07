@@ -100,21 +100,43 @@ has_cmd() { command -v "$1" >/dev/null 2>&1; }
 
 # Setup Node.js from nvm if available
 setup_nvm_node() {
-    # Try to load nvm if it exists
-    export NVM_DIR="$HOME/.nvm"
-    [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
-    [ -s "$NVM_DIR/bash_completion" ] && . "$NVM_DIR/bash_completion"
+    # Try multiple possible nvm locations
+    local possible_nvm_paths=(
+        "$HOME/.nvm"
+        "/home/node/.nvm"
+        "/root/.nvm"
+    )
+    
+    # Add SUDO_USER's home if available
+    if [ -n "${SUDO_USER:-}" ]; then
+        possible_nvm_paths+=("/home/$SUDO_USER/.nvm")
+    fi
+    
+    for nvm_path in "${possible_nvm_paths[@]}"; do
+        if [ -s "$nvm_path/nvm.sh" ]; then
+            export NVM_DIR="$nvm_path"
+            . "$NVM_DIR/nvm.sh"
+            if has_cmd node; then
+                log_success "Node.js from nvm ($nvm_path): $(node --version)"
+                return 0
+            fi
+        fi
+    done
 
-    # Also check root's nvm if running as sudo
-    if [ "$(id -u)" -ne 0 ] && [ -s "/root/.nvm/nvm.sh" ]; then
-        export NVM_DIR="/root/.nvm"
-        [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+    # Also try to find nvm anywhere
+    if ! has_cmd node; then
+        local nvm_location=$(find /home -name "nvm.sh" -path "*/.nvm/*" 2>/dev/null | head -1)
+        if [ -n "$nvm_location" ]; then
+            export NVM_DIR=$(dirname "$nvm_location")
+            . "$NVM_DIR/nvm.sh"
+            if has_cmd node; then
+                log_success "Node.js from nvm ($NVM_DIR): $(node --version)"
+                return 0
+            fi
+        fi
     fi
 
-    # Verify node is available
-    if has_cmd node; then
-        log_success "Node.js from nvm: $(node --version)"
-    fi
+    log_warn "Could not find nvm-installed Node.js"
 }
 
 ###############################################################################
