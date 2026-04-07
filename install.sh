@@ -272,14 +272,19 @@ step_clone_repos() {
     # Install dependencies - ensure we're in the right directory
     log_info "Installing whisk-api dependencies..."
     if has_cmd bun; then
+        # Clean install to avoid PathAlreadyExists and cache errors
+        rm -rf node_modules bun.lockb 2>/dev/null || true
+        
+        # Clear bun's global cache if it exists
+        if [ -d "$HOME/.bun/install/cache" ]; then
+            log_info "Clearing bun cache..."
+            rm -rf "$HOME/.bun/install/cache" 2>/dev/null || true
+        fi
+        
         bun install 2>&1 || {
-            log_warn "bun install failed, clearing cache and retrying..."
-            # Clear bun cache and retry
-            rm -rf node_modules bun.lockb
-            bun install 2>&1 || {
-                log_warn "bun still failed, falling back to npm..."
-                npm install 2>&1 || die "Failed to install whisk-api dependencies"
-            }
+            log_warn "bun install failed, falling back to npm..."
+            rm -rf node_modules bun.lockb 2>/dev/null || true
+            npm install 2>&1 || die "Failed to install whisk-api dependencies"
         }
     else
         npm install 2>&1 || die "Failed to install whisk-api dependencies"
