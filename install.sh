@@ -291,26 +291,12 @@ step_clone_repos() {
 
     cd "$whisk_api_dir"
 
-    # Install dependencies - ensure we're in the right directory
+    # Install dependencies
     log_info "Installing whisk-api dependencies..."
-    if has_cmd bun; then
-        # Clean install to avoid PathAlreadyExists and cache errors
-        rm -rf node_modules bun.lockb 2>/dev/null || true
-        
-        # Clear bun's global cache if it exists
-        if [ -d "$HOME/.bun/install/cache" ]; then
-            log_info "Clearing bun cache..."
-            rm -rf "$HOME/.bun/install/cache" 2>/dev/null || true
-        fi
-        
-        bun install 2>&1 || {
-            log_warn "bun install failed, falling back to npm..."
-            rm -rf node_modules bun.lockb 2>/dev/null || true
-            npm install 2>&1 || die "Failed to install whisk-api dependencies"
-        }
-    else
-        npm install 2>&1 || die "Failed to install whisk-api dependencies"
-    fi
+    
+    # Skip bun and use npm directly (bun has cache/performance issues)
+    rm -rf node_modules package-lock.json 2>/dev/null || true
+    npm install 2>&1 || die "Failed to install whisk-api dependencies"
 
     # Install TypeScript type definitions if missing
     if [ ! -d "node_modules/@types/node" ] || [ ! -d "node_modules/@types/yargs" ]; then
