@@ -21,7 +21,7 @@
 
 ```bash
 # One-line install (Linux)
-curl -fsSL https://raw.githubusercontent.com/HautlyS/Gimpsky/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/HautlyS/Gimpsky/master/install.sh | bash
 
 # Or clone and install
 git clone https://github.com/HautlyS/Gimpsky.git

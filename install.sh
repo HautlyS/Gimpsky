@@ -98,6 +98,25 @@ install_packages() {
 # Check if command exists
 has_cmd() { command -v "$1" >/dev/null 2>&1; }
 
+# Setup Node.js from nvm if available
+setup_nvm_node() {
+    # Try to load nvm if it exists
+    export NVM_DIR="$HOME/.nvm"
+    [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+    [ -s "$NVM_DIR/bash_completion" ] && . "$NVM_DIR/bash_completion"
+
+    # Also check root's nvm if running as sudo
+    if [ "$(id -u)" -ne 0 ] && [ -s "/root/.nvm/nvm.sh" ]; then
+        export NVM_DIR="/root/.nvm"
+        [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+    fi
+
+    # Verify node is available
+    if has_cmd node; then
+        log_success "Node.js from nvm: $(node --version)"
+    fi
+}
+
 ###############################################################################
 # Installation Steps
 ###############################################################################
@@ -121,6 +140,12 @@ step_check_root() {
     else
         USE_SUDO=""
     fi
+
+    # Preserve nvm and custom PATH when using sudo
+    if [ -n "$USE_SUDO" ]; then
+        # Export PATH explicitly for sudo commands
+        export SUDO_PATH="$PATH"
+    fi
 }
 
 step_detect_os() {
@@ -130,6 +155,14 @@ step_detect_os() {
 
 step_install_dependencies() {
     log_step "Installing dependencies"
+
+    # Setup PATH for sudo if needed
+    if [ -n "$USE_SUDO" ] && [ -n "$SUDO_PATH" ]; then
+        export PATH="$SUDO_PATH"
+    fi
+
+    # Try to load nvm for Node.js
+    setup_nvm_node
 
     # Node.js
     if ! has_cmd node; then
@@ -150,7 +183,11 @@ step_install_dependencies() {
                 ;;
         esac
     fi
-    log_success "Node.js: $(node --version)"
+    if has_cmd node; then
+        log_success "Node.js: $(node --version)"
+    else
+        die "Node.js installation failed"
+    fi
 
     # npm/bun
     if ! has_cmd bun && ! has_cmd npm; then
@@ -218,6 +255,11 @@ step_install_dependencies() {
 step_clone_repos() {
     log_step "Setting up Whisk API"
 
+    # Setup PATH for sudo if needed
+    if [ -n "$USE_SUDO" ] && [ -n "$SUDO_PATH" ]; then
+        export PATH="$SUDO_PATH"
+    fi
+
     local whisk_api_dir="$INSTALL_DIR/whisk-api"
     if [ ! -d "$whisk_api_dir" ]; then
         log_info "Cloning whisk-api..."
@@ -227,32 +269,55 @@ step_clone_repos() {
 
     cd "$whisk_api_dir"
 
-    # Install dependencies
-    if [ ! -d "node_modules" ]; then
-        log_info "Installing whisk-api dependencies..."
-        npm install >/dev/null 2>&1 || bun install 2>/dev/null || true
+    # Install dependencies - ensure we're in the right directory
+    log_info "Installing whisk-api dependencies..."
+    if has_cmd bun; then
+        bun install 2>&1 || {
+            log_warn "bun install failed, trying npm..."
+            npm install 2>&1 || die "Failed to install whisk-api dependencies"
+        }
+    else
+        npm install 2>&1 || die "Failed to install whisk-api dependencies"
+    fi
+
+    # Install TypeScript type definitions if missing
+    if [ ! -d "node_modules/@types/node" ] || [ ! -d "node_modules/@types/yargs" ]; then
+        log_info "Installing TypeScript type definitions..."
+        npm install --save-dev @types/node @types/yargs 2>&1 || true
     fi
 
     # Build
     if [ ! -d "dist" ] || [ ! -f "dist/index.js" ]; then
         log_info "Building whisk-api..."
 
+        # Fix tsconfig.json to include rootDir if it's missing
+        if [ -f "tsconfig.json" ]; then
+            if ! grep -q '"rootDir"' tsconfig.json; then
+                log_info "Fixing tsconfig.json to include rootDir..."
+                # Add rootDir before outDir
+                sed -i 's/"outDir":/"rootDir": ".\/src",\n        "outDir":/' tsconfig.json
+            fi
+        fi
+
         # Try bun first, then npm+tsc
         if has_cmd bun; then
-            bun install --dev 2>/dev/null || true
-            bun run build 2>/dev/null || true
+            bun run build 2>&1 >/dev/null || true
         fi
 
         if [ ! -d "dist" ] || [ ! -f "dist/index.js" ]; then
-            npm install 2>/dev/null || true
-
-            # Fix tsconfig if needed
-            if grep -q '"rootDir"' tsconfig.json 2>/dev/null; then
-                tsc -p tsconfig.json 2>/dev/null || true
+            # Check if package.json has build script
+            if grep -q '"build"' package.json 2>/dev/null; then
+                npm run build 2>&1 >/dev/null || {
+                    # Build may fail on types but still produce JS files
+                    if [ -d "dist" ] && [ -f "dist/index.js" ]; then
+                        log_success "whisk-api built (with type warnings)"
+                    else
+                        log_error "TypeScript build failed"
+                        log_warn "Continuing anyway, you may need to build manually later"
+                    fi
+                }
             else
-                # Add rootDir
-                sed -i.bak 's/"outDir"/"rootDir": ".\/src",\n        "outDir"/' tsconfig.json
-                tsc -p tsconfig.json 2>/dev/null || true
+                log_warn "No build script found in package.json"
             fi
         fi
     fi
@@ -267,6 +332,11 @@ step_clone_repos() {
 step_install_application() {
     log_step "Installing Whisk-GIMP Integration"
 
+    # Setup PATH for sudo if needed
+    if [ -n "$USE_SUDO" ] && [ -n "$SUDO_PATH" ]; then
+        export PATH="$SUDO_PATH"
+    fi
+
     # Create directories
     $USE_SUDO mkdir -p "$INSTALL_DIR"
     $USE_SUDO mkdir -p "$INSTALL_DIR/output"
@@ -276,11 +346,25 @@ step_install_application() {
     mkdir -p "$HOME/.config/whisk-gimp/logs"
     mkdir -p "$HOME/.config/whisk-gimp/output"
 
+    # Resolve the script's directory (handles symlinks and relative paths)
+    local script_dir="$SCRIPT_DIR"
+
+    # Verify source files exist before copying
+    if [ ! -f "$script_dir/src/bridge-server.js" ]; then
+        die "Source file bridge-server.js not found in $script_dir/src/"
+    fi
+    if [ ! -f "$script_dir/src/whisk_gimp_gui.py" ]; then
+        die "Source file whisk_gimp_gui.py not found in $script_dir/src/"
+    fi
+    if [ ! -f "$script_dir/scripts/whisk-gimp.sh" ]; then
+        die "Source file whisk-gimp.sh not found in $script_dir/scripts/"
+    fi
+
     # Copy files
     log_info "Copying application files..."
-    $USE_SUDO cp "$(dirname "$0")/src/bridge-server.js" "$INSTALL_DIR/"
-    $USE_SUDO cp "$(dirname "$0")/src/whisk_gimp_gui.py" "$INSTALL_DIR/"
-    $USE_SUDO cp "$(dirname "$0")/scripts/whisk-gimp.sh" "$INSTALL_DIR/"
+    $USE_SUDO cp "$script_dir/src/bridge-server.js" "$INSTALL_DIR/"
+    $USE_SUDO cp "$script_dir/src/whisk_gimp_gui.py" "$INSTALL_DIR/"
+    $USE_SUDO cp "$script_dir/scripts/whisk-gimp.sh" "$INSTALL_DIR/"
     $USE_SUDO chmod +x "$INSTALL_DIR/whisk-gimp.sh"
     $USE_SUDO chmod +x "$INSTALL_DIR/whisk_gimp_gui.py"
 
@@ -292,7 +376,7 @@ step_install_application() {
     # Install GIMP Script-Fu plugin
     local gimp_scripts_dir="$HOME/.config/GIMP/2.10/scripts"
     mkdir -p "$gimp_scripts_dir"
-    cp "$(dirname "$0")/gimp-scripts/whisk_ai_tools.scm" "$gimp_scripts_dir/"
+    cp "$script_dir/gimp-scripts/whisk_ai_tools.scm" "$gimp_scripts_dir/"
     log_success "GIMP Script-Fu plugin: Installed"
 
     # Create symlink for easy access
@@ -456,6 +540,9 @@ step_print_usage() {
 ###############################################################################
 
 main() {
+    # Save the script's directory at the very beginning (before any cd commands)
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
     step_banner
     step_check_root
     step_detect_os
