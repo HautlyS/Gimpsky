@@ -232,6 +232,7 @@ stop_gui() {
 
 start_gimp() {
     local pidfile="$PID_DIR/gimp.pid"
+    local xvfb_pidfile="$PID_DIR/xvfb.pid"
 
     if is_running "$pidfile"; then
         log_warn "GIMP already running (PID: $(get_pid "$pidfile"))"
@@ -242,6 +243,22 @@ start_gimp() {
 
     export DISPLAY=":$DISPLAY_NUM"
 
+    # Start Xvfb if not already running
+    if ! is_running "$xvfb_pidfile"; then
+        log_info "Starting Xvfb on display $DISPLAY_NUM..."
+        Xvfb ":$DISPLAY_NUM" -screen 0 1024x768x24 > "$LOG_DIR/xvfb.log" 2>&1 &
+        local xvfb_pid=$!
+        save_pid "$xvfb_pidfile" "$xvfb_pid"
+        sleep 1
+        
+        # Verify Xvfb started
+        if ! kill -0 "$xvfb_pid" 2>/dev/null; then
+            log_error "Xvfb failed to start. Check log: $LOG_DIR/xvfb.log"
+            return 1
+        fi
+        log_success "Xvfb started (PID: $xvfb_pid)"
+    fi
+
     nohup gimp > "$LOG_DIR/gimp.log" 2>&1 &
     local pid=$!
     save_pid "$pidfile" "$pid"
@@ -251,7 +268,7 @@ start_gimp() {
         log_success "GIMP started (PID: $pid)"
         return 0
     else
-        log_error "GIMP failed to start"
+        log_error "GIMP failed to start. Check log: $LOG_DIR/gimp.log"
         rm -f "$pidfile"
         return 1
     fi
@@ -259,6 +276,7 @@ start_gimp() {
 
 stop_gimp() {
     local pidfile="$PID_DIR/gimp.pid"
+    local xvfb_pidfile="$PID_DIR/xvfb.pid"
 
     if ! is_running "$pidfile"; then
         log_info "GIMP is not running"
@@ -273,6 +291,16 @@ stop_gimp() {
     kill "$pid" 2>/dev/null || true
     rm -f "$pidfile"
     log_success "GIMP stopped"
+
+    # Also stop Xvfb if it was started by us
+    if is_running "$xvfb_pidfile"; then
+        local xvfb_pid
+        xvfb_pid=$(get_pid "$xvfb_pidfile")
+        log_info "Stopping Xvfb (PID: $xvfb_pid)..."
+        kill "$xvfb_pid" 2>/dev/null || true
+        rm -f "$xvfb_pidfile"
+        log_success "Xvfb stopped"
+    fi
 }
 
 ###############################################################################

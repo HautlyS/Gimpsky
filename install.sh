@@ -248,6 +248,28 @@ step_install_dependencies() {
         log_success "GIMP: $(gimp --version 2>&1 | head -1)"
     fi
 
+    # Xvfb (Virtual Framebuffer for headless GIMP)
+    if ! has_cmd Xvfb; then
+        log_info "Installing Xvfb (virtual display)..."
+        case "$OS_NAME" in
+            ubuntu|debian)
+                install_packages xvfb
+                ;;
+            fedora|rhel)
+                install_packages xorg-x11-server-Xvfb
+                ;;
+            arch)
+                install_packages xvfb-server
+                ;;
+            macos)
+                log_warn "Xvfb not available on macOS, headless mode won't work"
+                ;;
+        esac
+    fi
+    if has_cmd Xvfb; then
+        log_success "Xvfb: Installed"
+    fi
+
     # Python3 + GTK
     if ! python3 -c "import gi" 2>/dev/null; then
         log_info "Installing Python GTK bindings..."
