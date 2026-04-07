@@ -21,11 +21,11 @@
 
 ```bash
 # One-line install (Linux)
-curl -fsSL https://raw.githubusercontent.com/YOUR_USER/whisk-gimp/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/HautlyS/Gimpsky/main/install.sh | bash
 
 # Or clone and install
-git clone https://github.com/YOUR_USER/whisk-gimp.git
-cd whisk-gimp
+git clone https://github.com/HautlyS/Gimpsky.git
+cd Gimpsky
 chmod +x install.sh
 ./install.sh
 ```
@@ -35,36 +35,23 @@ chmod +x install.sh
 ### Start Services
 
 ```bash
-whisk-gimp start
+Gimpsky start
 ```
 
 This starts:
 - **Bridge Server** (Node.js API on port 9876)
 - **Whisk GUI** (GTK3 application)
 - **GIMP** (Image editor with Script-Fu plugins)
-- **VNC Server** (for remote access, port 5901)
-
-### Connect Remotely
-
-From your local machine:
-
-```bash
-# SSH tunnel
-ssh -L 5901:localhost:5901 user@server-ip
-
-# Then connect VNC client to localhost:5901
-# Password: whiskgimp (change via VNC_PASSWORD env var)
-```
 
 ### Management
 
 ```bash
-whisk-gimp start      # Start all services
-whisk-gimp stop       # Stop all services
-whisk-gimp restart    # Restart everything
-whisk-gimp status     # Check service status
-whisk-gimp logs       # View logs
-whisk-gimp configure  # Configure Google cookie
+Gimpsky start      # Start all services
+Gimpsky stop       # Stop all services
+Gimpsky restart    # Restart everything
+Gimpsky status     # Check service status
+Gimpsky logs       # View logs
+Gimpsky configure  # Configure Google cookie
 ```
 
 ## First Time Setup
@@ -90,7 +77,7 @@ whisk-gimp configure  # Configure Google cookie
 ┌─────────────────────────────────────────────────┐
 │                 Your Local Machine               │
 │  ┌─────────────┐      ┌─────────────────────┐   │
-│  │  VNC Client │──────│  SSH Tunnel (:5901) │   │
+│  │  SSH Client │──────│  SSH Tunnel (:9876) │   │
 │  └─────────────┘      └─────────────────────┘   │
 └──────────────────────────┬──────────────────────┘
                            │ SSH
@@ -120,14 +107,14 @@ whisk-gimp configure  # Configure Google cookie
 ## Project Structure
 
 ```
-whisk-gimp/
+Gimpsky/
 ├── install.sh                 # Universal installer
 ├── README.md                  # This file
 ├── src/
 │   ├── bridge-server.js       # Node.js HTTP bridge server
 │   └── whisk_gimp_gui.py      # GTK3 GUI application
 ├── scripts/
-│   └── whisk-gimp.sh          # Service management script
+│   └── Gimpsky.sh          # Service management script
 ├── gimp-scripts/
 │   └── whisk_ai_tools.scm     # GIMP Script-Fu plugin
 └── plugins/                   # (future) Additional plugins
@@ -172,7 +159,6 @@ curl -X POST http://localhost:9876/generate \
 - Node.js 18+
 - GIMP 2.10+
 - Python 3.8+ with GTK3 bindings
-- x11vnc + Xvfb (for remote access)
 
 ### Linux (Fedora/RHEL)
 - Same as above, installed via dnf
@@ -181,7 +167,6 @@ curl -X POST http://localhost:9876/generate \
 - Node.js 18+
 - GIMP (manual install from gimp.org)
 - Python 3 with PyGObject
-- Note: VNC features not supported on macOS
 
 ## Configuration
 
@@ -189,18 +174,15 @@ Environment variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `WHISK_INSTALL_DIR` | `/opt/whisk-gimp` | Installation directory |
+| `WHISK_INSTALL_DIR` | `/opt/Gimpsky` | Installation directory |
 | `WHISK_BRIDGE_PORT` | `9876` | Bridge server port |
-| `VNC_PORT` | `5901` | VNC server port |
-| `VNC_PASSWORD` | `whiskgimp` | VNC password |
-| `VNC_RESOLUTION` | `1920x1080` | VNC display resolution |
 
 ## Troubleshooting
 
 ### "Bridge server not responding"
 ```bash
 curl http://localhost:9876/health
-whisk-gimp restart
+Gimpsky restart
 ```
 
 ### "Invalid cookie" error
@@ -214,15 +196,15 @@ whisk-gimp restart
 ls -la ~/.config/GIMP/2.10/scripts/whisk_ai_tools.scm
 
 # Restart GIMP
-whisk-gimp restart
+Gimpsky restart
 ```
 
 ### View logs
 ```bash
-whisk-gimp logs
+Gimpsky logs
 # Or check individual logs
-tail -f ~/.config/whisk-gimp/logs/bridge.log
-tail -f ~/.config/whisk-gimp/logs/gui.log
+tail -f ~/.config/Gimpsky/logs/bridge.log
+tail -f ~/.config/Gimpsky/logs/gui.log
 ```
 
 ## License

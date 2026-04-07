@@ -18,8 +18,6 @@ INSTALL_DIR="${WHISK_INSTALL_DIR:-/opt/whisk-gimp}"
 REPO_URL="https://github.com/YOUR_USER/whisk-gimp.git"
 WHISK_API_REPO="https://github.com/rohitaryal/whisk-api.git"
 BRIDGE_PORT="${WHISK_BRIDGE_PORT:-9876}"
-VNC_PORT="${VNC_PORT:-5901}"
-VNC_PASSWORD="${VNC_PASSWORD:-whiskgimp}"
 
 # Colors
 RED='\033[0;31m'
@@ -210,25 +208,6 @@ step_install_dependencies() {
         esac
     fi
     log_success "Python GTK: OK"
-
-    # VNC (Linux only)
-    if [ "$OS_NAME" != "macos" ]; then
-        if ! has_cmd x11vnc; then
-            log_info "Installing VNC tools..."
-            case "$OS_NAME" in
-                ubuntu|debian)
-                    install_packages x11vnc xvfb
-                    ;;
-                fedora|rhel)
-                    install_packages x11vnc xorg-x11-server-Xvfb
-                    ;;
-                arch)
-                    install_packages x11vnc xvfb
-                    ;;
-            esac
-        fi
-        log_success "VNC tools: OK"
-    fi
 
     # curl, wget
     if ! has_cmd curl; then
@@ -457,12 +436,7 @@ step_print_usage() {
     echo "  1. Start all services:"
     echo "     whisk-gimp start"
     echo ""
-    echo "  2. Connect via VNC (from your local machine):"
-    echo "     ssh -L 5901:localhost:5901 user@this-machine"
-    echo "     Then connect VNC client to: localhost:5901"
-    echo "     Password: $VNC_PASSWORD"
-    echo ""
-    echo "  3. Configure your Google cookie in the GUI Settings tab"
+    echo "  2. Configure your Google cookie in the GUI Settings tab"
     echo ""
     echo "Management Commands:"
     echo "  whisk-gimp start      - Start all services"

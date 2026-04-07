@@ -11,7 +11,6 @@
 #   ./whisk-gimp.sh gui        - Start GUI only
 #   ./whisk-gimp.sh gimp       - Start GIMP only
 #   ./whisk-gimp.sh bridge     - Start bridge server only
-#   ./whisk-gimp.sh vnc        - Start VNC server
 ###############################################################################
 
 set -euo pipefail
@@ -27,10 +26,6 @@ LOG_DIR="$CONFIG_DIR/logs"
 PID_DIR="$CONFIG_DIR/pids"
 
 BRIDGE_PORT="${WHISK_BRIDGE_PORT:-9876}"
-VNC_PORT="${VNC_PORT:-5901}"
-VNC_DISPLAY="${VNC_DISPLAY:-1}"
-VNC_PASSWORD="${VNC_PASSWORD:-whiskgimp}"
-VNC_RESOLUTION="${VNC_RESOLUTION:-1920x1080}"
 DISPLAY_NUM="${DISPLAY_NUM:-99}"
 
 # Colors for output
@@ -280,142 +275,6 @@ stop_gimp() {
     log_success "GIMP stopped"
 }
 
-start_vnc() {
-    local pidfile="$PID_DIR/vnc.pid"
-
-    if is_running "$pidfile"; then
-        log_warn "VNC server already running (PID: $(get_pid "$pidfile"))"
-        return 0
-    fi
-
-    log_info "Starting VNC server (Display: :$VNC_DISPLAY, Port: $VNC_PORT)..."
-
-    # Set VNC password
-    mkdir -p "$HOME/.vnc"
-    echo "$VNC_PASSWORD" | vncpasswd -f > "$HOME/.vnc/passwd" 2>/dev/null
-    chmod 600 "$HOME/.vnc/passwd"
-
-    # Create xstartup if it doesn't exist
-    if [ ! -f "$HOME/.vnc/xstartup" ]; then
-        cat > "$HOME/.vnc/xstartup" << 'XEOF'
-#!/bin/bash
-export XDG_CURRENT_DESKTOP=GNOME
-eval $(dbus-launch --sh-syntax) 2>/dev/null || true
-openbox &
-sleep 1
-XEOF
-        chmod +x "$HOME/.vnc/xstartup"
-    fi
-
-    # Start VNC
-    vncserver ":$VNC_DISPLAY" -geometry "$VNC_RESOLUTION" -depth 24 -localhost no 2>&1 | head -5
-
-    # Try to get PID
-    sleep 2
-    pgrep -f "Xtigervnc.*:$VNC_DISPLAY" > "$pidfile" 2>/dev/null || true
-
-    log_success "VNC server started on port $VNC_PORT"
-    log_info "Connect with password: $VNC_PASSWORD"
-}
-
-stop_vnc() {
-    log_info "Stopping VNC server..."
-    vncserver -kill ":$VNC_DISPLAY" 2>/dev/null || true
-    rm -f "$PID_DIR/vnc.pid"
-    log_success "VNC server stopped"
-}
-
-start_xvfb() {
-    local pidfile="$PID_DIR/xvfb.pid"
-
-    if is_running "$pidfile"; then
-        log_warn "Xvfb already running"
-        return 0
-    fi
-
-    log_info "Starting Xvfb (Display: :$DISPLAY_NUM)..."
-
-    # Clean up old locks
-    rm -f "/tmp/.X${DISPLAY_NUM}-lock" "/tmp/.X11-unix/X${DISPLAY_NUM}" 2>/dev/null || true
-
-    Xvfb ":$DISPLAY_NUM" -screen 0 "$VNC_RESOLUTION"x24 &
-    local pid=$!
-    save_pid "$pidfile" "$pid"
-
-    sleep 2
-    if DISPLAY=":$DISPLAY_NUM" xdpyinfo >/dev/null 2>&1; then
-        log_success "Xvfb started (PID: $pid)"
-        return 0
-    else
-        log_error "Xvfb failed to start"
-        rm -f "$pidfile"
-        return 1
-    fi
-}
-
-stop_xvfb() {
-    local pidfile="$PID_DIR/xvfb.pid"
-
-    if ! is_running "$pidfile"; then
-        # Try to find by process name
-        local pid
-        pid=$(pgrep -f "Xvfb.*:$DISPLAY_NUM" 2>/dev/null | head -1)
-        if [ -n "$pid" ]; then
-            log_info "Stopping Xvfb (PID: $pid)..."
-            kill "$pid" 2>/dev/null || true
-        fi
-        rm -f "$pidfile"
-        return 0
-    fi
-
-    local pid
-    pid=$(get_pid "$pidfile")
-    log_info "Stopping Xvfb (PID: $pid)..."
-    kill "$pid" 2>/dev/null || true
-    rm -f "$pidfile"
-    rm -f "/tmp/.X${DISPLAY_NUM}-lock" "/tmp/.X11-unix/X${DISPLAY_NUM}" 2>/dev/null || true
-    log_success "Xvfb stopped"
-}
-
-start_x11vnc() {
-    local pidfile="$PID_DIR/x11vnc.pid"
-
-    if is_running "$pidfile"; then
-        log_warn "x11vnc already running"
-        return 0
-    fi
-
-    log_info "Starting x11vnc (Port: $VNC_PORT)..."
-
-    x11vnc -display ":$DISPLAY_NUM" -forever -shared -rfbport "$VNC_PORT" -noipv6 -bg -rfbauth "$HOME/.vnc/passwd" 2>&1 | tail -3
-
-    sleep 1
-    pgrep -f "x11vnc.*:$DISPLAY_NUM" > "$pidfile" 2>/dev/null || true
-
-    log_success "x11vnc started on port $VNC_PORT"
-}
-
-stop_x11vnc() {
-    local pidfile="$PID_DIR/x11vnc.pid"
-
-    if ! is_running "$pidfile"; then
-        local pid
-        pid=$(pgrep -f "x11vnc" 2>/dev/null | head -1)
-        if [ -n "$pid" ]; then
-            kill "$pid" 2>/dev/null || true
-        fi
-        rm -f "$pidfile"
-        return 0
-    fi
-
-    local pid
-    pid=$(get_pid "$pidfile")
-    log_info "Stopping x11vnc (PID: $pid)..."
-    kill "$pid" 2>/dev/null || true
-    rm -f "$pidfile"
-    log_success "x11vnc stopped"
-}
-
 ###############################################################################
 # Main Commands
 ###############################################################################
@@ -424,21 +283,6 @@ cmd_start() {
     echo "========================================="
     echo "  Whisk AI - GIMP Integration"
     echo "========================================="
-    echo ""
-
-    # Start Xvfb
-    start_xvfb || exit 1
-    echo ""
-
-    # Start VNC password setup
-    mkdir -p "$HOME/.vnc"
-    if [ ! -f "$HOME/.vnc/passwd" ]; then
-        echo "$VNC_PASSWORD" | vncpasswd -f > "$HOME/.vnc/passwd" 2>/dev/null
-        chmod 600 "$HOME/.vnc/passwd"
-    fi
-
-    # Start x11vnc
-    start_x11vnc
     echo ""
 
     # Start bridge server
@@ -457,17 +301,7 @@ cmd_start() {
     log_success "All services started!"
     echo "========================================="
     echo ""
-    echo "Connection Information:"
-    echo "  VNC Port: $VNC_PORT"
-    echo "  VNC Password: $VNC_PASSWORD"
-    echo ""
-    echo "To connect from your local machine:"
-    echo "  1. SSH tunnel: ssh -L $VNC_PORT:localhost:$VNC_PORT root@$(curl -s ifconfig.me 2>/dev/null || echo 'YOUR_EC2_IP')"
-    echo "  2. VNC client: vnc://localhost:$VNC_PORT"
-    echo ""
     echo "Service PIDs:"
-    echo "  Xvfb:      $(get_pid "$PID_DIR/xvfb.pid" 2>/dev/null || echo 'N/A')"
-    echo "  x11vnc:    $(get_pid "$PID_DIR/x11vnc.pid" 2>/dev/null || echo 'N/A')"
     echo "  Bridge:    $(get_pid "$PID_DIR/bridge.pid" 2>/dev/null || echo 'N/A')"
     echo "  GUI:       $(get_pid "$PID_DIR/gui.pid" 2>/dev/null || echo 'N/A')"
     echo "  GIMP:      $(get_pid "$PID_DIR/gimp.pid" 2>/dev/null || echo 'N/A')"
@@ -483,8 +317,6 @@ cmd_stop() {
     stop_gimp
     stop_gui
     stop_bridge
-    stop_x11vnc
-    stop_xvfb
 
     echo ""
     log_success "All services stopped"
@@ -501,20 +333,6 @@ cmd_status() {
     echo "  Service Status"
     echo "========================================="
     echo ""
-
-    # Xvfb
-    if is_running "$PID_DIR/xvfb.pid" || pgrep -f "Xvfb.*:$DISPLAY_NUM" >/dev/null 2>&1; then
-        log_success "Xvfb (Display :$DISPLAY_NUM) - Running"
-    else
-        log_error "Xvfb - Stopped"
-    fi
-
-    # x11vnc
-    if is_running "$PID_DIR/x11vnc.pid" || pgrep -f "x11vnc" >/dev/null 2>&1; then
-        log_success "x11vnc (Port $VNC_PORT) - Running"
-    else
-        log_error "x11vnc - Stopped"
-    fi
 
     # Bridge Server
     if curl -s "http://127.0.0.1:$BRIDGE_PORT/health" >/dev/null 2>&1; then
@@ -665,9 +483,6 @@ case "${1:-help}" in
     bridge)
         start_bridge
         ;;
-    vnc)
-        start_vnc
-        ;;
     configure)
         cmd_configure "$2"
         ;;
@@ -683,15 +498,11 @@ case "${1:-help}" in
         echo "  gui          - Start GUI only"
         echo "  gimp         - Start GIMP only"
         echo "  bridge       - Start bridge server only"
-        echo "  vnc          - Start VNC server"
         echo "  configure    - Show configuration instructions"
         echo "  help         - Show this help"
         echo ""
         echo "Environment Variables:"
         echo "  WHISK_BRIDGE_PORT  - Bridge server port (default: 9876)"
-        echo "  VNC_PORT           - VNC server port (default: 5901)"
-        echo "  VNC_PASSWORD       - VNC password (default: whiskgimp)"
-        echo "  VNC_RESOLUTION     - VNC resolution (default: 1920x1080)"
         ;;
     *)
         echo "Unknown command: $1"
